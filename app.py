@@ -4,7 +4,7 @@ import re
 import io
 
 st.set_page_config(page_title="ربط الحملات بالمنتجات", page_icon="📊", layout="wide")
-st.title("🎯 ربط حملات الإعلانات بالمنتجات")
+st.title("🎯 ربط حملات الإعلانات بالمنتجات + تقرير لكل منتج")
 st.markdown("---")
 
 # ========= تهيئة حالة الجلسة =========
@@ -194,7 +194,6 @@ elif st.session_state.current_step == 'manual_match':
                     key=f"nores_{i}"
                 )
 
-            # حفظ في manual_mapping
             if no_result:
                 st.session_state.manual_mapping[row['campaign_name']] = [NO_RESULT_LABEL]
             else:
@@ -208,9 +207,9 @@ elif st.session_state.current_step == 'manual_match':
         st.session_state.current_step = 'final'
         st.rerun()
 
-# ========= STEP 3: تقرير نهائي PER CAMPAIGN =========
+# ========= STEP 3: تقرير نهائي للحملات + تقرير مجمّع لكل منتج =========
 elif st.session_state.current_step == 'final':
-    st.subheader("📊 التقرير النهائي حسب الحملة")
+    st.subheader("📊 التقرير النهائي")
 
     grouped = st.session_state.grouped_campaigns.copy()
     products_df = st.session_state.products_df
@@ -219,8 +218,7 @@ elif st.session_state.current_step == 'final':
     # ربط كل حملة بقائمة منتجات (أو لا توجد نتائج)
     grouped['قائمة المنتجات'] = grouped['campaign_name'].map(manual_mapping)
 
-    # فصل الحملات حسب الحالة
-    # 1) حملات عامة: manual_mapping = [لا توجد نتائج]
+    # حملات عامة (لا توجد نتائج)
     def is_no_result(lst):
         return isinstance(lst, list) and len(lst) == 1 and lst[0] == NO_RESULT_LABEL
 
@@ -231,14 +229,16 @@ elif st.session_state.current_step == 'final':
     def products_list_to_str(lst):
         if not isinstance(lst, list) or len(lst) == 0:
             return ""
-        return " | ".join(map(str, lst))
+        # شيل التكرار لو حصل
+        unique = list(dict.fromkeys(map(str, lst)))
+        return " | ".join(unique)
 
     grouped['أسماء المنتجات'] = grouped['قائمة المنتجات'].apply(products_list_to_str)
 
     # تقريب الصرف
     grouped['cost'] = grouped['cost'].round(2)
 
-    # تجهيز جدول الحملات الأساسي
+    # --- 3.1 تقرير على مستوى الحملات ---
     final_campaigns = grouped[['campaign_name', 'ads_count', 'أسماء المنتجات', 'cost', 'source_file']].copy()
     final_campaigns.rename(columns={
         'campaign_name': 'اسم الحملة',
@@ -258,7 +258,7 @@ elif st.session_state.current_step == 'final':
             final_campaigns['اسم الحملة'].str.contains(search, case=False, na=False) |
             final_campaigns['أسماء المنتجات'].fillna('').str.contains(search, case=False)
         ]
-    st.dataframe(view_df, use_container_width=True, height=400)
+    st.dataframe(view_df, use_container_width=True, height=350)
 
     # عرض الحملات العامة (لا توجد نتائج)
     if not campaigns_no_result.empty:
@@ -275,6 +275,72 @@ elif st.session_state.current_step == 'final':
     else:
         df_no_res = pd.DataFrame()
 
+    # --- 3.2 تقرير مجمّع لكل منتج ---
+    st.subheader("📦 تقرير مجمّع لكل منتج")
+
+    if campaigns_with_products.empty:
+        st.warning("لا توجد حملات مرتبطة بمنتجات.")
+        final_by_product = pd.DataFrame()
+    else:
+        # 1) فكّ الربط: كل (حملة × منتج) كسطر منفصل
+        rows = []
+        for _, row in campaigns_with_products.iterrows():
+            products_lst = row['قائمة المنتجات'] if isinstance(row['قائمة المنتجات'], list) else []
+            unique_products = list(dict.fromkeys(map(str, products_lst)))
+            for p in unique_products:
+                rows.append({
+                    'اسم المنتج': p,
+                    'اسم الحملة': row['campaign_name'],
+                    'إجمالي الصرف_الحملة': row['cost'],
+                    'عدد الإعلانات_الحملة': row['ads_count']
+                })
+        if rows:
+            df_campaign_product = pd.DataFrame(rows)
+        else:
+            df_campaign_product = pd.DataFrame(columns=['اسم المنتج', 'اسم الحملة', 'إجمالي الصرف_الحملة', 'عدد الإعلانات_الحملة'])
+
+        # 2) تجميع على مستوى المنتج:
+        #    عدد الحملات، إجمالي الصرف، ثم نضيف من شيت المنتجات إجمالي الأوردرات / التسليم / المرتجع
+        agg_from_campaigns = df_campaign_product.groupby('اسم المنتج').agg({
+            'اسم الحملة': 'count',
+            'إجمالي الصرف_الحملة': 'sum'
+        }).rename(columns={
+            'اسم الحملة': 'عدد الحملات',
+            'إجمالي الصرف_الحملة': 'إجمالي الصرف'
+        })
+
+        # تجهيز أرقام المنتجات
+        required_cols = ['اسم المنتج', 'إجمالي الأوردرات', 'تم التسليم', 'ملغي']
+        for c in required_cols:
+            if c not in products_df.columns:
+                st.warning(f"⚠️ عمود {c} مش موجود في شيت المنتجات، هيتسجل 0.")
+                products_df[c] = 0
+
+        agg_from_products = products_df.groupby('اسم المنتج').agg({
+            'إجمالي الأوردرات': 'sum',
+            'تم التسليم': 'sum',
+            'ملغي': 'sum'
+        })
+
+        # دمج
+        final_by_product = agg_from_campaigns.join(agg_from_products, how='left').fillna(0)
+
+        # حساب سعر الأوردر المسلم
+        final_by_product['سعر الأوردر المسلم'] = final_by_product.apply(
+            lambda r: (r['إجمالي الصرف'] / r['تم التسليم']) if r['تم التسليم'] > 0 else None,
+            axis=1
+        )
+
+        # تقريب الأرقام
+        num_cols_prod = final_by_product.select_dtypes(include=['float', 'int']).columns
+        final_by_product[num_cols_prod] = final_by_product[num_cols_prod].round(2)
+
+        final_by_product = final_by_product.reset_index()
+        final_by_product = final_by_product.sort_values('إجمالي الصرف', ascending=False)
+
+    if not final_by_product.empty:
+        st.dataframe(final_by_product, use_container_width=True, height=350)
+
     # منتجات لم تُستخدم في أي حملة
     used_products = set()
     for lst in campaigns_with_products['قائمة المنتجات']:
@@ -289,19 +355,21 @@ elif st.session_state.current_step == 'final':
         st.subheader("📦 منتجات بدون أي حملات مرتبطة")
         st.dataframe(unused_products, use_container_width=True, height=250)
 
-    # تحميل Excel
+    # تحميل Excel: شيت حملات + شيت منتجات + شيت حملات بلا نتائج + شيت منتجات بلا حملات
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        final_campaigns.to_excel(writer, index=False, sheet_name="حملات بمنتجات")
+        final_campaigns.to_excel(writer, index=False, sheet_name="تقرير الحملات")
+        if not final_by_product.empty:
+            final_by_product.to_excel(writer, index=False, sheet_name="تقرير المنتجات")
         if not df_no_res.empty:
             df_no_res.to_excel(writer, index=False, sheet_name="حملات بلا نتائج")
         if not unused_products.empty:
             unused_products.to_excel(writer, index=False, sheet_name="منتجات بلا حملات")
 
     st.download_button(
-        "⬇️ تحميل التقرير (Excel)",
+        "⬇️ تحميل التقرير الكامل (Excel)",
         data=buf.getvalue(),
-        file_name="تقرير_الحملات_والمنتجات.xlsx",
+        file_name="تقرير_الحملات_والمنتجات_مجمع.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
     )
