@@ -36,8 +36,13 @@ def normalize_campaign_name(name):
     return name.strip()
 
 def extract_campaign_data(df, file_name):
-    """تحديد عمود اسم الإعلان وعمود الصرف بدقة"""
-    # عمود اسم الإعلان
+    """
+    استخراج اسم الإعلان والصرف:
+    - أولاً من عمود فيه 'amount spent'
+    - لو مش موجود، من عمود فيه 'cost'
+    - مع تجنب cpc/cpm/cost per
+    """
+    # اسم الإعلان
     campaign_col = None
     for col in df.columns:
         col_lower = str(col).lower()
@@ -45,17 +50,24 @@ def extract_campaign_data(df, file_name):
             campaign_col = col
             break
 
-    # عمود التكلفة / الصرف
+    # الصرف: أولوية لعمود amount spent
     cost_col = None
+    # 1) محاولة للـ amount spent
     for col in df.columns:
         col_lower = str(col).lower()
-        # نحاول نتفادى أعمدة زي CPM, CPC إلخ
-        if any(k in col_lower for k in ['amount spent', 'spend', 'cost', 'budget', 'تكلفة', 'صرف', 'انفاق']):
-            # استثناء أعمدة مثل cpc, cpm, cost per
-            if any(bad in col_lower for bad in ['cpc', 'cpm', 'per', '/']):
-                continue
+        if 'amount spent' in col_lower:
             cost_col = col
             break
+    # 2) لو مفيش amount spent، نحاول cost
+    if cost_col is None:
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if 'cost' in col_lower or 'spend' in col_lower or 'انفاق' in col_lower or 'صرف' in col_lower or 'تكلفة' in col_lower:
+                # استثناء cpc, cpm, cost per
+                if any(bad in col_lower for bad in ['cpc', 'cpm', 'per', '/']):
+                    continue
+                cost_col = col
+                break
 
     if campaign_col is None or cost_col is None:
         st.error(f"❌ ملف {file_name}: لم يتم العثور على عمود اسم الإعلان أو عمود الصرف.")
@@ -68,7 +80,7 @@ def extract_campaign_data(df, file_name):
     out['cost'] = pd.to_numeric(df[cost_col], errors='coerce')
     out['source_file'] = file_name
 
-    st.success(f"✅ {file_name} | اسم الإعلان: {campaign_col} | الصرف: {cost_col}")
+    st.success(f"✅ {file_name} | اسم الإعلان: {campaign_col} | الصرف من العمود: {cost_col}")
     return out
 
 def find_product_match(campaign_name, products_list, threshold=60):
@@ -82,7 +94,6 @@ def find_product_match(campaign_name, products_list, threshold=60):
     for product in products_list:
         product_lower = str(product).lower()
         score = SequenceMatcher(None, campaign_lower, product_lower).ratio() * 100
-        # تعزيز لو في كلمة مشتركة
         for w in campaign_lower.split():
             w = w.strip()
             if len(w) > 3 and w in product_lower:
@@ -97,7 +108,7 @@ def find_product_match(campaign_name, products_list, threshold=60):
 if st.session_state.current_step == 'upload':
     st.subheader("📁 رفع ملفات الإعلانات")
     campaigns_files = st.file_uploader(
-        "ارفع ملفات الإعلانات (يمكن أكثر من ملف: Facebook, TikTok,... )",
+        "ارفع ملفات الإعلانات (Facebook, TikTok, ...)",
         type=["xlsx", "xls"],
         accept_multiple_files=True,
         key="campaigns"
@@ -122,7 +133,6 @@ if st.session_state.current_step == 'upload':
                     all_campaigns.append(extracted)
             if not all_campaigns:
                 st.stop()
-
             campaigns_df = pd.concat(all_campaigns, ignore_index=True)
 
             # المنتجات
@@ -144,7 +154,7 @@ if st.session_state.current_step == 'upload':
                 st.stop()
             products_df = pd.concat(all_products, ignore_index=True)
 
-            # تجميع الإعلانات بنفس الاسم المنظف
+            # تجميع الحملات حسب الاسم المنظف
             grouped = campaigns_df.groupby('campaign_name').agg({
                 'cost': 'sum',
                 'campaign_name_raw': lambda x: list(x.unique()),
@@ -155,7 +165,7 @@ if st.session_state.current_step == 'upload':
             grouped = grouped[['campaign_name', 'cost', 'ads_count', 'campaign_name_raw', 'source_file']]
             grouped = grouped.sort_values('cost', ascending=False)
 
-            # مطابقة تلقائية مع المنتجات
+            # مطابقة تلقائية
             products_list = products_df['اسم المنتج'].astype(str).tolist()
             grouped['matched_product'] = None
             grouped['match_score'] = 0.0
@@ -173,30 +183,38 @@ if st.session_state.current_step == 'upload':
             st.session_state.products_df = products_df
             st.session_state.unmatched = unmatched
             st.session_state.manual_mapping = {}
+
             if len(unmatched) > 0:
                 st.session_state.current_step = 'manual_match'
             else:
                 st.session_state.current_step = 'final'
             st.rerun()
 
-# ========= STEP 2: Manual Match =========
+# ========= STEP 2: Manual Match (كل الإعلانات غير المطابقة) =========
 elif st.session_state.current_step == 'manual_match':
-    st.subheader("🔍 مطابقة الإعلانات يدويًا مع المنتجات")
+    st.subheader("🔍 مطابقة كل الإعلانات غير المرتبطة بأي منتج")
 
     grouped = st.session_state.campaigns_grouped
     products_df = st.session_state.products_df
     unmatched = st.session_state.unmatched.sort_values('cost', ascending=False)
 
-    st.warning(f"يوجد {len(unmatched)} مجموعة إعلانية بدون منتج مطابق، قم بتحديد المنتج لكل إعلان.")
+    st.warning(f"عدد الإعلانات غير المطابقة: {len(unmatched)} إعلان / مجموعة")
 
     products_list = products_df['اسم المنتج'].astype(str).tolist()
     products_options = ['-- اختر من القائمة --', 'لا يوجد منتج (none)'] + products_list
 
+    st.info("💡 تقدر تبحث داخل قائمة المنتجات بالكتابة في خانة السيرش في الـ selectbox.")
+
+    # form لكل الإعلانات غير المطابقة (بدون تقطيع)
     with st.form("manual_form"):
         for idx, (i, row) in enumerate(unmatched.iterrows(), 1):
-            st.markdown(f"### {idx}. اسم الحملة المدمجة:")
+            st.markdown(f"### {idx}. الحملة المدمجة:")
             st.code(row['campaign_name'])
-            st.write(f"💰 إجمالي الصرف: {row['cost']:.2f} | 📊 عدد الإعلانات: {row['ads_count']} | 📁 من ملفات: {row['source_file']}")
+            st.write(
+                f"💰 إجمالي الصرف: {row['cost']:.2f} | "
+                f"📊 عدد الإعلانات: {row['ads_count']} | "
+                f"📁 من الملفات: {row['source_file']}"
+            )
 
             mode = st.radio(
                 "طريقة المطابقة:",
@@ -207,7 +225,7 @@ elif st.session_state.current_step == 'manual_match':
             if mode == 'اختيار من قائمة المنتجات':
                 sel = st.selectbox(
                     "اختر المنتج المرتبط بهذه الحملة:",
-                    products_options,
+                    options=products_options,
                     key=f"sel_{i}"
                 )
                 if sel == 'لا يوجد منتج (none)':
@@ -216,7 +234,7 @@ elif st.session_state.current_step == 'manual_match':
                     st.session_state.manual_mapping[row['campaign_name']] = sel
             else:
                 typed = st.text_input(
-                    "اكتب اسم المنتج كما تحب يظهر في التقرير:",
+                    "اكتب اسم المنتج (كما تريد يظهر في التقرير):",
                     key=f"typed_{i}"
                 )
                 if typed.strip():
@@ -227,18 +245,16 @@ elif st.session_state.current_step == 'manual_match':
         ok = st.form_submit_button("✅ تطبيق المطابقة والمتابعة", type="primary")
 
     if ok:
-        # تطبيق المطابقة اليدوية
+        # تطبيق كل المطابقات اليدوية
         for cname, pname in st.session_state.manual_mapping.items():
             grouped.loc[grouped['campaign_name'] == cname, 'matched_product'] = pname
             grouped.loc[grouped['campaign_name'] == cname, 'match_score'] = 100 if pname else 0
 
         st.session_state.campaigns_grouped = grouped
-        # تحديث unmatched بعد المطابقة
         st.session_state.unmatched = grouped[grouped['matched_product'].isna()]
 
         if len(st.session_state.unmatched) > 0:
-            # لو لسه فيه إعلانات بدون منتج، نرجع للمطابقة اليدوية مرة تانية
-            st.info(f"مازال هناك {len(st.session_state.unmatched)} إعلان بدون منتج، سيتم عرضهم في جولة أخرى.")
+            st.info(f"مازال هناك {len(st.session_state.unmatched)} حملة بدون منتج، سيتم عرضها لتكمل المطابقة.")
             st.rerun()
         else:
             st.session_state.current_step = 'final'
@@ -323,7 +339,7 @@ elif st.session_state.current_step == 'final':
 
     st.download_button(
         "⬇️ تحميل التقرير (Excel)",
-        data=buf.getvalue(),
+        data=buf.getValue() if hasattr(buf, "getValue") else buf.getvalue(),
         file_name="تقرير_الاعلانات_والمنتجات_النهائي.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
