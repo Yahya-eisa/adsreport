@@ -4,9 +4,9 @@ import re
 from difflib import SequenceMatcher
 import io
 
-st.set_page_config(page_title="دمج الإعلانات والمنتجات", page_icon="📊", layout="wide")
+st.set_page_config(page_title="تقرير الاعلانات", page_icon="📊", layout="wide")
 
-st.title("🎯 دمج الإعلانات مع المنتجات")
+st.title("🎯 تقرير الاعلانات")
 st.markdown("---")
 
 # Initialize session state
@@ -391,4 +391,5 @@ elif st.session_state.current_step == 'final':
 
 # تذييل
 st.markdown("---")
-st.markdown("Made with ❤️ | Powered by Streamlit")
+st.markdown("Made with ❤️ | YAHYA EISSA")
+
