@@ -191,5 +191,4 @@ else:
 
 # تذييل
 st.markdown("---")
-st.markdown("Made with ❤️ for YAHYA")
-
+st.markdown("Made with ❤️ for Ali Deal Kuwait")
