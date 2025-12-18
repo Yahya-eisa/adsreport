@@ -215,7 +215,7 @@ if st.session_state.current_step == 'upload':
             else:
                 st.session_state.current_step = 'final'
 
-            st.experimental_rerun()
+            st.rerun()
 
 # ==================== المرحلة 2: المطابقة اليدوية لأي إعلان بدون منتج ====================
 
@@ -224,12 +224,12 @@ elif st.session_state.current_step == 'manual_match':
     unmatched = st.session_state.unmatched.sort_values('total_spent', ascending=False)
     products_list = st.session_state.products_df['اسم المنتج'].tolist()
 
-    st.warning(f"يوجد {len(unmatched)} مجموعة إعلانية بدون منتج واضح، هسيبك تطابقهم.")
+    st.warning(f"يوجد {len(unmatched)} مجموعة إعلانية بدون منتج واضح، قم بمطابقتها يدويًا.")
 
     products_options = ['-- اختيار من القائمة --', 'لا يوجد منتج (none)'] + products_list
 
     st.markdown("---")
-    st.info("💡 لكل إعلان: يا إما تختار منتج من القائمة، يا إما تكتب اسم المنتج يدويًا.")
+    st.info("💡 لكل إعلان: إما تختار منتج من القائمة، أو تكتب اسم المنتج يدويًا.")
 
     with st.form("manual_matching_form"):
         for idx, (i, row) in enumerate(unmatched.head(30).iterrows(), 1):
@@ -289,12 +289,12 @@ elif st.session_state.current_step == 'manual_match':
         st.success(f"✅ تم تطبيق {len(st.session_state.manual_mapping)} مطابقة يدوية")
 
         st.session_state.current_step = 'final'
-        st.experimental_rerun()
+        st.rerun()
 
     st.markdown("---")
     if st.button("⏭️ تخطي وإكمال بدون مطابقة إضافية"):
         st.session_state.current_step = 'final'
-        st.experimental_rerun()
+        st.rerun()
 
 # ==================== المرحلة 3: إنشاء وعرض التقرير النهائي ====================
 
@@ -388,7 +388,7 @@ elif st.session_state.current_step == 'final':
     st.markdown("---")
     if st.button("🔄 البدء من جديد"):
         st.session_state.clear()
-        st.experimental_rerun()
+        st.rerun()
 
 # ==================== تذييل ====================
 st.markdown("---")
